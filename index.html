@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Giám sát bể nuôi thủy sản - Lab 3 Đề 4</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    background: #ffffff;              /* nền trắng */
+    color: #1f2933;
+    font-family: "Segoe UI", Arial, sans-serif;
+  }
+  .container { max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: #52606d; margin: 0 0 16px; }
+
+  .status-bar {
+    display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
+    padding: 10px 14px; border: 1px solid #cbd2d9; border-radius: 8px;
+    margin-bottom: 20px; font-size: 14px;
+  }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+         background: #e12d39; margin-right: 6px; }
+  .dot.on { background: #18a957; }
+
+  .grid { display: grid; gap: 16px; }
+  .cards { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px; }
+  .card { border: 1px solid #cbd2d9; border-radius: 8px; padding: 16px; background: #f8fafc; }
+  .card .label { font-size: 14px; color: #52606d; }
+  .card .value { font-size: 36px; font-weight: 600; margin-top: 6px; }
+  .card .unit { font-size: 16px; font-weight: 400; color: #52606d; margin-left: 4px; }
+
+  .charts { grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); margin-bottom: 20px; }
+  .chart-box { border: 1px solid #cbd2d9; border-radius: 8px; padding: 12px; }
+  .chart-box h3 { margin: 0 0 8px; font-size: 16px; }
+  .chart-wrap { position: relative; height: 240px; }
+
+  .control { border: 1px solid #cbd2d9; border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+  .control h3 { margin: 0 0 12px; font-size: 16px; }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 12px; }
+  button {
+    font-size: 16px; padding: 12px 20px; border-radius: 8px; cursor: pointer;
+    border: 2px solid #9aa5b1; background: #e4e7eb; color: #1f2933; min-width: 200px;
+  }
+  button:focus-visible { outline: 3px solid #2680c2; outline-offset: 2px; }
+  button.on { background: #18a957; border-color: #118042; color: #fff; }
+  button.auto { background: #2680c2; border-color: #1c5f93; color: #fff; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .hint { font-size: 13px; color: #52606d; margin-top: 10px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border: 1px solid #cbd2d9; padding: 8px 10px; text-align: left; }
+  th { background: #f0f4f8; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Giám sát bể nuôi thủy, hải sản</h1>
+  <p class="sub">ESP32 + FreeRTOS + MQTT | Cảm biến HC-SR04 (mực nước), DS18B20 (nhiệt độ)</p>
+
+  <div class="status-bar">
+    <div><span class="dot status-dot"></span><span class="status-conn">Đang kết nối...</span></div>
+    <div>Chế độ: <b class="status-mode">--</b></div>
+    <div>Cập nhật lần cuối: <b class="status-time">--</b></div>
+  </div>
+
+  <!-- 2 thẻ hiển thị dữ liệu dạng số -->
+  <div class="grid cards">
+    <div class="card">
+      <div class="label">Mực nước</div>
+      <div class="value"><span class="data-level">--</span><span class="unit">m</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Nhiệt độ bể</div>
+      <div class="value"><span class="data-temp">--</span><span class="unit">°C</span></div>
+    </div>
+    <div class="card">
+      <div class="label">Khoảng cách cảm biến</div>
+      <div class="value"><span class="data-distance">--</span><span class="unit">cm</span></div>
+    </div>
+  </div>
+
+  <!-- 2 biểu đồ thời gian thực -->
+  <div class="grid charts">
+    <div class="chart-box">
+      <h3>Biểu đồ mực nước (m)</h3>
+      <div class="chart-wrap"><canvas id="chartLevel"></canvas></div>
+    </div>
+    <div class="chart-box">
+      <h3>Biểu đồ nhiệt độ bể (°C)</h3>
+      <div class="chart-wrap"><canvas id="chartTemp"></canvas></div>
+    </div>
+  </div>
+
+  <!-- 2 nút điều khiển thủ công -->
+  <div class="control">
+    <h3>Điều khiển thủ công</h3>
+    <div class="btn-row">
+      <button id="btnPump" class="btn-pump" disabled>Máy bơm vào: --</button>
+      <button id="btnValve" class="btn-valve" disabled>Van thoát ra: --</button>
+      <button id="btnAuto" class="auto" disabled>Về chế độ tự động</button>
+    </div>
+    <div class="hint">Bấm nút bơm hoặc van sẽ chuyển ESP32 sang chế độ MANUAL (bơm chạy 100%). Bấm "Về chế độ tự động" để chạy theo thuật toán.</div>
+    <div class="hint">Công suất bơm hiện tại: <b class="status-pump">--</b></div>
+  </div>
+
+  <!-- Bảng thuật toán -->
+  <div class="control">
+    <h3>Thuật toán tự động</h3>
+    <table>
+      <tr><th>Mực nước</th><th>Hành động</th></tr>
+      <tr><td>1 m – 1,5 m</td><td>Bơm 50% công suất, chạy 10 giây</td></tr>
+      <tr><td>1,5 m – 2 m</td><td>Bơm 100% công suất, chạy 20 giây</td></tr>
+      <tr><td>Dưới 0,5 m</td><td>Mở van thoát, chạy 10 giây</td></tr>
+    </table>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+  // ===== CẤU HÌNH (phải GIỐNG code ESP32) =====
+  const TOPIC_PREFIX = "lab3_de4_TrieuTrongHieu_KTVT_K64";
+  const BROKER_URL   = "wss://broker.hivemq.com:8884/mqtt";   // WebSocket bảo mật (GitHub Pages dùng https)
+  const TOPIC_DATA   = TOPIC_PREFIX + "/data";
+  const TOPIC_STATE  = TOPIC_PREFIX + "/state";
+  const TOPIC_CTRL   = TOPIC_PREFIX + "/control";
+  const MAX_POINTS   = 30;
+
+  // ===== BIỂU ĐỒ =====
+  function makeChart(canvasId, label, color) {
+    return new Chart(document.getElementById(canvasId), {
+      type: "line",
+      data: { labels: [], datasets: [{ label: label, data: [], borderColor: color,
+              backgroundColor: color, tension: 0.25, pointRadius: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false, animation: false,
+                 scales: { y: { beginAtZero: false } } }
+    });
+  }
+  const chartLevel = makeChart("chartLevel", "Mực nước (m)", "#2680c2");
+  const chartTemp  = makeChart("chartTemp", "Nhiệt độ (°C)", "#e8590c");
+
+  function pushPoint(chart, label, value) {
+    chart.data.labels.push(label);
+    chart.data.datasets[0].data.push(value);
+    if (chart.data.labels.length > MAX_POINTS) {
+      chart.data.labels.shift();
+      chart.data.datasets[0].data.shift();
+    }
+    chart.update();
+  }
+
+  // ===== PHẦN TỬ GIAO DIỆN (chọn theo class) =====
+  const $ = (sel) => document.querySelector(sel);
+  const elLevel = $(".data-level"), elTemp = $(".data-temp"), elDist = $(".data-distance");
+  const elConn = $(".status-conn"), elDot = $(".status-dot");
+  const elMode = $(".status-mode"), elTime = $(".status-time"), elPumpPct = $(".status-pump");
+  const btnPump = $(".btn-pump"), btnValve = $(".btn-valve"), btnAuto = $("#btnAuto");
+
+  let pumpOn = false, valveOn = false;
+
+  // ===== MQTT =====
+  const client = mqtt.connect(BROKER_URL, {
+    clientId: "web_de4_" + Math.random().toString(16).slice(2, 10),
+    reconnectPeriod: 3000
+  });
+
+  client.on("connect", () => {
+    elConn.textContent = "Đã kết nối MQTT broker";
+    elDot.classList.add("on");
+    [btnPump, btnValve, btnAuto].forEach(b => b.disabled = false);
+    client.subscribe([TOPIC_DATA, TOPIC_STATE]);
+  });
+  client.on("close", () => {
+    elConn.textContent = "Mất kết nối, đang thử lại...";
+    elDot.classList.remove("on");
+  });
+  client.on("error", (e) => { elConn.textContent = "Lỗi: " + e.message; });
+
+  client.on("message", (topic, payload) => {
+    let obj;
+    try { obj = JSON.parse(payload.toString()); } catch (e) { return; }
+
+    if (topic === TOPIC_DATA) {
+      const now = new Date().toLocaleTimeString("vi-VN");
+      elLevel.textContent = obj.level.toFixed(2);
+      elTemp.textContent  = obj.temp.toFixed(1);
+      elDist.textContent  = obj.distance.toFixed(1);
+      elTime.textContent  = now;
+      pushPoint(chartLevel, now, obj.level);
+      pushPoint(chartTemp, now, obj.temp);
+    }
+
+    if (topic === TOPIC_STATE) {
+      pumpOn  = obj.pump > 0;
+      valveOn = obj.valve === 1;
+      elMode.textContent = obj.mode;
+      elPumpPct.textContent = obj.pump + "%";
+      btnPump.textContent  = "Máy bơm vào: " + (pumpOn ? "BẬT (" + obj.pump + "%)" : "TẮT");
+      btnValve.textContent = "Van thoát ra: " + (valveOn ? "MỞ" : "ĐÓNG");
+      btnPump.classList.toggle("on", pumpOn);
+      btnValve.classList.toggle("on", valveOn);
+    }
+  });
+
+  // ===== NÚT ĐIỀU KHIỂN =====
+  btnPump.addEventListener("click",  () => client.publish(TOPIC_CTRL, pumpOn ? "PUMP_OFF" : "PUMP_ON"));
+  btnValve.addEventListener("click", () => client.publish(TOPIC_CTRL, valveOn ? "VALVE_OFF" : "VALVE_ON"));
+  btnAuto.addEventListener("click",  () => client.publish(TOPIC_CTRL, "AUTO"));
+</script>
+</body>
+</html>
